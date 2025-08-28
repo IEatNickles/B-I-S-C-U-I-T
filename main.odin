@@ -333,78 +333,64 @@ main :: proc() {
 }
 
 load_levels :: proc(path: string) -> []Level {
+	cont, err := os.read_entire_file("assets/levels/order.txt")
+	cont_str := string(cont)
 	levels: [dynamic]Level
-	level_dir, err0 := os.open(path)
-	if err0 != os.ERROR_NONE {
-		fmt.eprintln("Could not open directory: ", err0)
-	} else {
-		defer os.close(level_dir)
-		file_infos, err1 := os.read_dir(level_dir, -1)
-		if err1 != os.ERROR_NONE {
-			fmt.eprintln("Could not read files: ", err1)
-		} else {
-			slice.reverse(file_infos)
-			for file in file_infos {
-				level: Level
-				i := -1
+	for line in strings.split_lines_iterator(&cont_str) {
+		level: Level
+		i := -1
 
-				content, err2 := os.read_entire_file(file.fullpath)
-				if !err2 {
-					fmt.eprintln("File no good :(")
-				}
-				j, e := json.parse(content)
-				#partial switch lvl in j {
-				case json.Object:
-					size := lvl["size"].(json.Array)
-					level.size.x = i32(size[0].(json.Float))
-					level.size.y = i32(size[1].(json.Float))
-					level.tiles = make([]Tile, level.size.x * level.size.y)
-					data := lvl["data"].(json.String)
-					for b in data {
-						i += 1
-						pos :=
-							[2]f32 {
-								f32(i % int(level.size.x)),
-								math.floor(f32(i) / f32(level.size.x)),
-							} *
-							50
-						switch b {
-						case '0':
-							continue
-						case 'B':
-							level.tiles[i] = BasicTile{pos, .None}
-						case 'T':
-							level.tiles[i] = BasicTile{pos, .Top}
-						case 'L':
-							level.tiles[i] = BasicTile{pos, .Left}
-						case 'R':
-							level.tiles[i] = BasicTile{pos, .Right}
-						case 'C':
-							level.tiles[i] = BasicTile{pos, .Center}
-						case 'D':
-							level.tiles[i] = DeathTile{pos, .Up}
-						case 'F':
-							level.tiles[i] = DeathTile{pos, .Down}
-						case 'Q':
-							level.tiles[i] = DeathTile{pos, .Left}
-						case 'W':
-							level.tiles[i] = DeathTile{pos, .Right}
-						case 'P':
-							level.tiles[i] = CheckpointTile{pos, false}
-						case 'S':
-							level.start = pos
-						case 'E':
-							level.tiles[i] = EndTile{pos}
-						}
-					}
-				case:
-					fmt.eprintln("Expected an object")
-				}
-
-				append(&levels, level)
-				fmt.println("loaded level: ", file.name)
-			}
+		content, err2 := os.read_entire_file(line)
+		if !err2 {
+			fmt.eprintln("File no good :(")
 		}
+		j, e := json.parse(content)
+		#partial switch lvl in j {
+		case json.Object:
+			size := lvl["size"].(json.Array)
+			level.size.x = i32(size[0].(json.Float))
+			level.size.y = i32(size[1].(json.Float))
+			level.tiles = make([]Tile, level.size.x * level.size.y)
+			data := lvl["data"].(json.String)
+			for b in data {
+				i += 1
+				pos :=
+					[2]f32{f32(i % int(level.size.x)), math.floor(f32(i) / f32(level.size.x))} * 50
+				switch b {
+				case '0':
+					continue
+				case 'B':
+					level.tiles[i] = BasicTile{pos, .None}
+				case 'T':
+					level.tiles[i] = BasicTile{pos, .Top}
+				case 'L':
+					level.tiles[i] = BasicTile{pos, .Left}
+				case 'R':
+					level.tiles[i] = BasicTile{pos, .Right}
+				case 'C':
+					level.tiles[i] = BasicTile{pos, .Center}
+				case 'D':
+					level.tiles[i] = DeathTile{pos, .Up}
+				case 'F':
+					level.tiles[i] = DeathTile{pos, .Down}
+				case 'Q':
+					level.tiles[i] = DeathTile{pos, .Left}
+				case 'W':
+					level.tiles[i] = DeathTile{pos, .Right}
+				case 'P':
+					level.tiles[i] = CheckpointTile{pos, false}
+				case 'S':
+					level.start = pos
+				case 'E':
+					level.tiles[i] = EndTile{pos}
+				}
+			}
+		case:
+			fmt.eprintln("Expected an object")
+		}
+
+		append(&levels, level)
+		fmt.println("loaded level: ", line)
 	}
 	return levels[:]
 }
