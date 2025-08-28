@@ -1,5 +1,6 @@
 package main
 
+import "core:encoding/json"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
@@ -11,111 +12,62 @@ import "core:strings"
 import "core:unicode"
 import rl "vendor:raylib"
 
+import "physics"
+
 Player :: struct {
 	pos:        [2]f32,
 	vel:        [2]f32,
-	size:       f32,
+	size:       [2]f32,
 	speed:      f32,
 	jump_force: f32,
 	grounded:   bool,
-}
-
-CollisionMiss :: struct {}
-CollisionHit :: struct {
-	point:  [2]f32,
-	normal: [2]f32,
-	dist:   f32,
-}
-Collision :: union {
-	CollisionMiss,
-	CollisionHit,
+	checkpoint: [2]f32,
+	jumps:      i32,
+	input:      f32,
+	dir:        f32,
+	walk_time:  i32,
 }
 
 TileSide :: enum {
 	Top,
-	Bottom,
 	Left,
 	Right,
 	Center,
 	None,
 }
 
+Direction :: enum {
+	Up,
+	Down,
+	Left,
+	Right,
+}
+
 BasicTile :: struct {
 	pos:  [2]f32,
-	size: [2]f32,
 	side: TileSide,
 }
 
 DeathTile :: struct {
-	pos:  [2]f32,
-	size: [2]f32,
+	pos: [2]f32,
+	dir: Direction,
 }
+
+CheckpointTile :: struct {
+	pos: [2]f32,
+}
+
+EndTile :: struct {
+	pos: [2]f32,
+}
+
+TILE_SIZE :: 50
 
 Tile :: union {
 	BasicTile,
 	DeathTile,
-}
-
-raycast_aabb :: proc(origin, direction: [2]f32, rect: rl.Rectangle) -> Collision {
-	near := ([2]f32{rect.x, rect.y} - origin) / direction
-	far := ([2]f32{rect.x + rect.width, rect.y + rect.height} - origin) / direction
-
-	if near.x > far.x {
-		tmp := near.x
-		near.x = far.x
-		far.x = tmp
-	}
-	if near.y > far.y {
-		tmp := near.y
-		near.y = far.y
-		far.y = tmp
-	}
-
-	if linalg.any(linalg.is_nan(far)) {
-		return CollisionMiss{}
-	}
-	if linalg.any(linalg.is_nan(near)) {
-		return CollisionMiss{}
-	}
-
-	if near.x > far.y || near.y > far.x {
-		return CollisionMiss{}
-	}
-
-	near_hit := max(near.x, near.y)
-	far_hit := min(far.x, far.y)
-	if far_hit < 0 || near_hit > 1 {
-		return CollisionMiss{}
-	}
-
-	point := origin + direction * near_hit
-	normal := [2]f32{}
-	if near.x > near.y {
-		if direction.x < 0 {
-			normal = {1, 0}
-		} else {
-			normal = {-1, 0}
-		}
-	} else {
-		if direction.y < 0 {
-			normal = {0, 1}
-		} else {
-			normal = {0, -1}
-		}
-	}
-
-	return CollisionHit{point, normal, near_hit}
-}
-
-rect_vs_rect :: proc(r1, r2: rl.Rectangle, vel: [2]f32, dt: f32) -> Collision {
-	half_extents := [2]f32{r1.width * 0.5, r1.height * 0.5}
-	expanded_rect := rl.Rectangle {
-		r2.x - half_extents.x,
-		r2.y - half_extents.y,
-		r2.width + r1.width,
-		r2.height + r1.height,
-	}
-	return raycast_aabb({r1.x, r1.y} + half_extents, vel * dt, expanded_rect)
+	CheckpointTile,
+	EndTile,
 }
 
 rects_intersect :: proc(r1, r2: rl.Rectangle) -> bool {
@@ -125,99 +77,90 @@ rects_intersect :: proc(r1, r2: rl.Rectangle) -> bool {
 	)
 }
 
+Level :: struct {
+	tiles: []Tile,
+	start: [2]f32,
+	size:  [2]i32,
+}
+
+Assets :: struct {
+	floor_tex:        rl.Texture2D,
+	floor_top_tex:    rl.Texture2D,
+	floor_lef_tex:    rl.Texture2D,
+	floor_rig_tex:    rl.Texture2D,
+	floor_cen_tex:    rl.Texture2D,
+	spike_tex:        rl.Texture2D,
+	checkpoint_tex:   rl.Texture2D,
+	start_tex:        rl.Texture2D,
+	end_tex:          rl.Texture2D,
+	player_tex:       rl.Texture2D,
+	jump_sound:       rl.Sound,
+	jump_fail_sound:  rl.Sound,
+	checkpoint_sound: rl.Sound,
+	finish_sound:     rl.Sound,
+	walk_sound:       rl.Sound,
+	death_sound:      rl.Sound,
+}
+
 main :: proc() {
 	rl.InitWindow(1600, 900, "B I S C U I T")
+	rl.InitAudioDevice()
 	rl.SetTargetFPS(60)
 
-	floor_tex := rl.LoadTexture("assets/kenny/PNG/Tiles/Brown tiles/tileBrown_27.png")
-	floor_top_tex := rl.LoadTexture("assets/kenny/PNG/Tiles/Brown tiles/tileBrown_02.png")
-	floor_bot_tex := rl.LoadTexture("assets/kenny/PNG/Tiles/Brown tiles/tileBrown_27.png")
-	floor_lef_tex := rl.LoadTexture("assets/kenny/PNG/Tiles/Brown tiles/tileBrown_01.png")
-	floor_rig_tex := rl.LoadTexture("assets/kenny/PNG/Tiles/Brown tiles/tileBrown_03.png")
-	floor_cen_tex := rl.LoadTexture("assets/kenny/PNG/Tiles/Brown tiles/tileBrown_04.png")
-	spike_tex := rl.LoadTexture("assets/kenny/PNG/Other/spikesHigh.png")
-	player_tex := rl.LoadTexture("assets/kenny/PNG/Players/Player Green/playerGreen_stand.png")
-	player_walk1_tex := rl.LoadTexture(
-		"assets/kenny/PNG/Players/Player Green/playerGreen_walk1.png",
-	)
-	player_walk2_tex := rl.LoadTexture(
-		"assets/kenny/PNG/Players/Player Green/playerGreen_walk3.png",
-	)
-	player_air_tex := rl.LoadTexture("assets/kenny/PNG/Players/Player Green/playerGreen_up2.png")
+	assets := load_assets("assets")
+	levels := load_levels("assets/levels")
 
-	spawn_point := [2]f32{math.nan_f32(), math.nan_f32()}
+	current_level := 0
+	level := levels[current_level]
 
-	data, success := os.read_entire_file("assets/level.txt")
-	if !success {
-		fmt.println("File no good :(")
-	}
+	plr: Player
+	plr.pos = level.start
+	plr.size = {17, 33}
+	plr.speed = 7
+	plr.jump_force = 12
+	plr.checkpoint = plr.pos
+	plr.jumps = 2
+	plr.dir = 1
 
-	level: [dynamic]Tile
-	i := -1
-	for b in data {
-		if strings.is_ascii_space(rune(b)) {
-			continue
-		}
-		num := u8(b) - u8('0')
-		i += 1
-
-		if num == 0 {
-			continue
-		}
-		pos := [2]f32{f32(i % 32), math.floor(f32(i) / 32)} * 50
-		if num == 3 {
-			assert(
-				linalg.all(linalg.is_nan(spawn_point)),
-				"Cannot have more than one spawn point in a level",
-			)
-			spawn_point = pos + {25, 25}
-		}
-
-		switch num {
-		case 1:
-			append(&level, BasicTile{pos, {50, 50}, .None})
-		case 4:
-			append(&level, BasicTile{pos, {50, 50}, .Top})
-		case 5:
-			append(&level, BasicTile{pos, {50, 50}, .Bottom})
-		case 6:
-			append(&level, BasicTile{pos, {50, 50}, .Left})
-		case 7:
-			append(&level, BasicTile{pos, {50, 50}, .Right})
-		case 8:
-			append(&level, BasicTile{pos, {50, 50}, .Center})
-		case 2:
-			append(&level, DeathTile{pos, {50, 50}})
-		}
-	}
-
-	plr := Player{spawn_point, {}, 20, 10, 20, false}
-	input_dir: f32
+	play_walk: bool
+	walk_time: i32
 
 	cam := rl.Camera2D{{}, {}, 0, 1}
 	dt: f32 = 0
 	for !rl.WindowShouldClose() {
 		dt = rl.GetFrameTime()
 
+		cam.target = linalg.lerp(
+			cam.target,
+			linalg.floor(plr.pos / {f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}) * 1600,
+			dt * 4,
+		)
+
 		if rl.IsKeyDown(rl.KeyboardKey.D) {
-			input_dir = 1
+			plr.input = 1
+			plr.dir = 1
 		} else if rl.IsKeyDown(rl.KeyboardKey.A) {
-			input_dir = -1
+			plr.input = -1
+			plr.dir = -1
 		} else {
-			input_dir = 0
+			plr.input = 0
 		}
-		plr.vel.x = math.lerp(plr.vel.x, input_dir * plr.speed * 100, dt * 20)
-		plr.vel.y += 200
+		plr.vel.x = math.lerp(plr.vel.x, plr.input * plr.speed * 100, dt * 20)
+		if plr.vel.x < 1 && plr.vel.x > 0 {
+			plr.vel.x = 0
+		}
+		plr.vel.y += 100
 		if (rl.IsKeyPressed(rl.KeyboardKey.W)) {
-			plr.vel.y = plr.jump_force * -100
+			if plr.jumps > 0 {
+				plr.vel.y = plr.jump_force * -100
+				plr.jumps -= 1
+				rl.PlaySound(assets.jump_sound)
+			} else {
+				rl.PlaySound(assets.jump_fail_sound)
+			}
 		}
 
-		plr_rect := rl.Rectangle {
-			plr.pos.x - plr.size,
-			plr.pos.y - plr.size * 1.3,
-			plr.size * 2,
-			plr.size * 2 * 1.3,
-		}
+		plr_rect := rl.Rectangle{plr.pos.x, plr.pos.y, plr.size.x, plr.size.y}
 
 		vel_rect := rl.Rectangle {
 			plr_rect.x + plr.vel.x * dt,
@@ -238,33 +181,65 @@ main :: proc() {
 			dist: f32,
 		}
 		hits: [dynamic]HitEntry
-		for tile, i in level {
+		for tile, i in level.tiles {
 			switch t in tile {
 			case BasicTile:
-				tile_rect := rl.Rectangle{t.pos.x, t.pos.y, t.size.x, t.size.y}
+				tile_rect := rl.Rectangle{t.pos.x, t.pos.y, TILE_SIZE, TILE_SIZE}
 				if !rects_intersect(tile_rect, test_rect) {
 					continue
 				}
 
-				switch col in rect_vs_rect(plr_rect, tile_rect, plr.vel, dt) {
-				case CollisionHit:
+				switch col in physics.rect_vs_rect(plr_rect, tile_rect, plr.vel, dt) {
+				case physics.CollisionHit:
 					append(&hits, HitEntry{i, col.dist})
 					if col.normal.y < 0 {
+						plr.jumps = 2
 						plr.grounded = true
 					}
-				case CollisionMiss:
+				case physics.CollisionMiss:
 				}
 			case DeathTile:
-				tile_rect := rl.Rectangle{t.pos.x, t.pos.y, t.size.x, t.size.y}
+				tile_rect := rl.Rectangle{t.pos.x, t.pos.y, TILE_SIZE, TILE_SIZE}
 				if !rects_intersect(tile_rect, test_rect) {
 					continue
 				}
 
-				switch col in rect_vs_rect(plr_rect, tile_rect, plr.vel, dt) {
-				case CollisionHit:
-					plr.pos = spawn_point
+				switch col in physics.rect_vs_rect(plr_rect, tile_rect, plr.vel, dt) {
+				case physics.CollisionHit:
+					plr.pos = plr.checkpoint
 					plr.vel = {0, 0}
-				case CollisionMiss:
+					rl.PlaySound(assets.death_sound)
+				case physics.CollisionMiss:
+				}
+			case CheckpointTile:
+				tile_rect := rl.Rectangle{t.pos.x, t.pos.y, TILE_SIZE, TILE_SIZE}
+				if !rects_intersect(tile_rect, test_rect) {
+					continue
+				}
+
+				switch col in physics.rect_vs_rect(plr_rect, tile_rect, plr.vel, dt) {
+				case physics.CollisionHit:
+					if plr.checkpoint != t.pos {
+						plr.checkpoint = t.pos
+						rl.PlaySound(assets.checkpoint_sound)
+					}
+				case physics.CollisionMiss:
+				}
+			case EndTile:
+				tile_rect := rl.Rectangle{t.pos.x, t.pos.y, TILE_SIZE, TILE_SIZE}
+				if !rects_intersect(tile_rect, test_rect) {
+					continue
+				}
+
+				switch col in physics.rect_vs_rect(plr_rect, tile_rect, plr.vel, dt) {
+				case physics.CollisionHit:
+					current_level += 1
+					level = levels[current_level]
+					plr.checkpoint = level.start
+					plr.pos = level.start
+					plr.vel = {}
+					rl.PlaySound(assets.finish_sound)
+				case physics.CollisionMiss:
 				}
 			}
 		}
@@ -274,12 +249,12 @@ main :: proc() {
 		})
 
 		for hit in hits {
-			t := level[hit.idx].(BasicTile)
-			tile_rect := rl.Rectangle{t.pos.x, t.pos.y, t.size.x, t.size.y}
-			switch col in rect_vs_rect(plr_rect, tile_rect, plr.vel, dt) {
-			case CollisionHit:
+			t := level.tiles[hit.idx].(BasicTile)
+			tile_rect := rl.Rectangle{t.pos.x, t.pos.y, TILE_SIZE, TILE_SIZE}
+			switch col in physics.rect_vs_rect(plr_rect, tile_rect, plr.vel, dt) {
+			case physics.CollisionHit:
 				plr.vel += col.normal * linalg.abs(plr.vel) * (1.001 - col.dist)
-			case CollisionMiss:
+			case physics.CollisionMiss:
 			}
 		}
 
@@ -291,63 +266,8 @@ main :: proc() {
 
 		rl.BeginMode2D(cam)
 
-		for tile in level {
-			switch t in tile {
-			case BasicTile:
-				tex: rl.Texture2D
-				switch t.side {
-				case .Top:
-					tex = floor_top_tex
-				case .Center:
-					tex = floor_cen_tex
-				case .Left:
-					tex = floor_lef_tex
-				case .Right:
-					tex = floor_rig_tex
-				case .Bottom:
-					tex = floor_bot_tex
-				case .None:
-					tex = floor_tex
-				}
-				rl.DrawTexturePro(
-					tex,
-					rl.Rectangle{0, 0, 64, 64},
-					rl.Rectangle{t.pos.x, t.pos.y, 50, 50},
-					{0, 0},
-					0,
-					rl.WHITE,
-				)
-			case DeathTile:
-				rl.DrawTexturePro(
-					spike_tex,
-					rl.Rectangle{0, 0, 64, 30},
-					rl.Rectangle{t.pos.x, t.pos.y, 50, 50},
-					{0, 0},
-					0,
-					rl.WHITE,
-				)
-			}
-		}
-		rl.DrawCircleV(spawn_point, 30, rl.YELLOW)
-		// rl.DrawCircleV(plr.pos, plr.size, rl.SKYBLUE)
-		tex: rl.Texture2D
-		if plr.grounded {
-			if abs(input_dir) > 0 {
-				tex = i32(rl.GetTime() * 10) % 2 == 0 ? player_walk1_tex : player_walk2_tex
-			} else {
-				tex = player_tex
-			}
-		} else {
-			tex = player_air_tex
-		}
-		rl.DrawTexturePro(
-			tex,
-			rl.Rectangle{0, 0, 38 * (input_dir == 0 ? 1 : input_dir), 50},
-			plr_rect,
-			{},
-			0,
-			rl.WHITE,
-		)
+		draw_level(level, assets)
+		draw_player(&plr, assets)
 
 		rl.EndMode2D()
 
@@ -359,4 +279,227 @@ main :: proc() {
 	}
 
 	rl.CloseWindow()
+}
+
+load_levels :: proc(path: string) -> []Level {
+	levels: [dynamic]Level
+	level_dir, err0 := os.open(path)
+	if err0 != os.ERROR_NONE {
+		fmt.eprintln("Could not open directory: ", err0)
+	} else {
+		defer os.close(level_dir)
+		file_infos, err1 := os.read_dir(level_dir, -1)
+		if err1 != os.ERROR_NONE {
+			fmt.eprintln("Could not read files: ", err1)
+		} else {
+			for file in file_infos {
+				level: Level
+				i := -1
+
+				content, err2 := os.read_entire_file(file.fullpath)
+				if !err2 {
+					fmt.eprintln("File no good :(")
+				}
+				j, e := json.parse(content)
+				#partial switch lvl in j {
+				case json.Object:
+					size := lvl["size"].(json.Array)
+					level.size.x = i32(size[0].(json.Float))
+					level.size.y = i32(size[1].(json.Float))
+					level.tiles = make([]Tile, level.size.x * level.size.y)
+					data := lvl["data"].(json.String)
+					for b in data {
+						i += 1
+						pos :=
+							[2]f32 {
+								f32(i % int(level.size.x)),
+								math.floor(f32(i) / f32(level.size.x)),
+							} *
+							50
+						switch b {
+						case '0':
+							continue
+						case 'B':
+							level.tiles[i] = BasicTile{pos, .None}
+						case 'T':
+							level.tiles[i] = BasicTile{pos, .Top}
+						case 'L':
+							level.tiles[i] = BasicTile{pos, .Left}
+						case 'R':
+							level.tiles[i] = BasicTile{pos, .Right}
+						case 'C':
+							level.tiles[i] = BasicTile{pos, .Center}
+						case 'D':
+							level.tiles[i] = DeathTile{pos, .Up}
+						case 'F':
+							level.tiles[i] = DeathTile{pos, .Down}
+						case 'Q':
+							level.tiles[i] = DeathTile{pos, .Left}
+						case 'W':
+							level.tiles[i] = DeathTile{pos, .Right}
+						case 'P':
+							level.tiles[i] = CheckpointTile{pos}
+						case 'S':
+							level.start = pos
+						case 'E':
+							level.tiles[i] = EndTile{pos}
+						}
+					}
+				case:
+					fmt.eprintln("Expected an object")
+				}
+
+				append(&levels, level)
+				fmt.println("loaded level: ", file.name)
+			}
+		}
+	}
+	return levels[:]
+}
+
+load_assets :: proc(path: string) -> (assets: Assets) {
+	assets.floor_tex = rl.LoadTexture("assets/textures/rock.png")
+	assets.floor_top_tex = rl.LoadTexture("assets/textures/rock_top.png")
+	assets.floor_lef_tex = rl.LoadTexture("assets/textures/rock_left.png")
+	assets.floor_rig_tex = rl.LoadTexture("assets/textures/rock_right.png")
+	assets.floor_cen_tex = rl.LoadTexture("assets/textures/rock_center.png")
+	assets.spike_tex = rl.LoadTexture("assets/textures/spike.png")
+	assets.checkpoint_tex = rl.LoadTexture("assets/textures/flag_up.png")
+	assets.start_tex = rl.LoadTexture("assets/kenny/PNG/Other/doorRed_top.png")
+	assets.end_tex = rl.LoadTexture("assets/textures/biscuit.png")
+	assets.player_tex = rl.LoadTexture("assets/textures/player.png")
+
+	assets.jump_sound = rl.LoadSound("assets/sounds/jump.wav")
+	assets.jump_fail_sound = rl.LoadSound("assets/sounds/jump_fail.wav")
+	assets.checkpoint_sound = rl.LoadSound("assets/sounds/checkpoint.wav")
+	assets.finish_sound = rl.LoadSound("assets/sounds/finish.wav")
+	assets.walk_sound = rl.LoadSound("assets/sounds/walk.wav")
+	assets.death_sound = rl.LoadSound("assets/sounds/death.wav")
+	return assets
+}
+
+draw_level :: proc(level: Level, assets: Assets) {
+	for tile in level.tiles {
+		switch t in tile {
+		case BasicTile:
+			tex: rl.Texture2D
+			switch t.side {
+			case .Top:
+				tex = assets.floor_top_tex
+			case .Center:
+				tex = assets.floor_cen_tex
+			case .Left:
+				tex = assets.floor_lef_tex
+			case .Right:
+				tex = assets.floor_rig_tex
+			case .None:
+				tex = assets.floor_tex
+			}
+			rl.DrawTexturePro(
+				tex,
+				rl.Rectangle{0, 0, 32, 32},
+				rl.Rectangle{t.pos.x, t.pos.y, 50, 50},
+				{0, 0},
+				0,
+				rl.WHITE,
+			)
+		case DeathTile:
+			switch t.dir {
+			case .Up:
+				rl.DrawTexturePro(
+					assets.spike_tex,
+					rl.Rectangle{0, 0, 32, 32},
+					rl.Rectangle{t.pos.x, t.pos.y, 50, 50},
+					{},
+					0,
+					rl.WHITE,
+				)
+			case .Down:
+				rl.DrawTexturePro(
+					assets.spike_tex,
+					rl.Rectangle{0, 0, 32, 32},
+					rl.Rectangle{t.pos.x + 50, t.pos.y + 50, 50, 50},
+					{},
+					180,
+					rl.WHITE,
+				)
+			case .Left:
+				rl.DrawTexturePro(
+					assets.spike_tex,
+					rl.Rectangle{0, 0, 32, 32},
+					rl.Rectangle{t.pos.x, t.pos.y + 50, 50, 50},
+					{},
+					270,
+					rl.WHITE,
+				)
+			case .Right:
+				rl.DrawTexturePro(
+					assets.spike_tex,
+					rl.Rectangle{0, 0, 32, 32},
+					rl.Rectangle{t.pos.x + 50, t.pos.y, 50, 50},
+					{},
+					90,
+					rl.WHITE,
+				)
+			}
+		case CheckpointTile:
+			rl.DrawTexturePro(
+				assets.checkpoint_tex,
+				rl.Rectangle{0, 0, 32, 32},
+				rl.Rectangle{t.pos.x, t.pos.y, 50, 50},
+				{},
+				0,
+				rl.WHITE,
+			)
+		case EndTile:
+			rl.DrawTexturePro(
+				assets.end_tex,
+				rl.Rectangle{0, 0, 32, 32},
+				rl.Rectangle{t.pos.x, t.pos.y, 50, 50},
+				{},
+				0,
+				rl.WHITE,
+			)
+		}
+		rl.DrawTexturePro(
+			assets.start_tex,
+			rl.Rectangle{0, 0, 64, 64},
+			rl.Rectangle{level.start.x, level.start.y, 50, 50},
+			{},
+			0,
+			rl.WHITE,
+		)
+	}
+}
+
+draw_player :: proc(plr: ^Player, assets: Assets) {
+	texture_rec := rl.Rectangle{9, 10, 11, 21}
+	if plr.grounded {
+		if abs(plr.input) > 0 {
+			t := i32(rl.GetTime() * 7) % 4
+			switch t {
+			case 0:
+				texture_rec.x = 75
+			case 1 | 3:
+				texture_rec.x = 9
+			case 2:
+				texture_rec.x = 105
+			}
+			if (t == 1 || t == 3) && plr.walk_time != t {
+				rl.PlaySound(assets.walk_sound)
+			}
+			plr.walk_time = t
+		}
+	} else {
+		texture_rec.x = 40
+		texture_rec.y = 7
+		texture_rec.width = 15
+		texture_rec.height = 25
+	}
+	if plr.dir < 0 {
+		texture_rec.width = -texture_rec.width
+	}
+
+	plr_rect := rl.Rectangle{plr.pos.x, plr.pos.y, plr.size.x, plr.size.y}
+	rl.DrawTexturePro(assets.player_tex, texture_rec, plr_rect, {}, 0, rl.WHITE)
 }
