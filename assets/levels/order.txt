@@ -1,2 +1,5 @@
+assets/levels/lvl5.json
 assets/levels/lvl1.json
 assets/levels/lvl2.json
+assets/levels/lvl3.json
+assets/levels/lvl4.json

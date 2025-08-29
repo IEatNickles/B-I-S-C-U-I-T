@@ -95,7 +95,6 @@ Assets :: struct {
 	spike_tex:            rl.Texture2D,
 	checkpoint_down_tex:  rl.Texture2D,
 	checkpoint_up_tex:    rl.Texture2D,
-	start_tex:            rl.Texture2D,
 	end_tex:              rl.Texture2D,
 	player_tex:           rl.Texture2D,
 	biscuits_found_tex:   rl.Texture2D,
@@ -158,6 +157,7 @@ main :: proc() {
 	game_just_finished: bool
 
 	show_collision: bool
+	show_fps: bool
 
 	cam := rl.Camera2D{{}, {}, 0, 1}
 	dt: f32 = 0
@@ -204,6 +204,10 @@ main :: proc() {
 					plr.pos = level.start + plr.size * 0.5
 					plr.checkpoint = plr.pos
 				}
+				if rl.IsKeyPressed(rl.KeyboardKey.C) {
+					plr.pos = plr.checkpoint
+					plr.vel = {}
+				}
 			}
 
 			player_collision(&level, &plr, assets, dt)
@@ -221,22 +225,16 @@ main :: proc() {
 		if !game_finished {
 			rl.BeginMode2D(cam)
 
-			draw_level(level, assets)
-			draw_player(&plr, assets)
-			if show_collision {
-				draw_collision(level, plr)
-			}
-
 			if current_level == 0 {
 				rl.DrawText(
-					"Press 'W' to jump\nUse 'A' and 'D' to move\nJump in the air to double jump\nPress 'R' to restart",
+					"Press 'W' to jump\nUse 'A' and 'D' to move\nJump in the air to double jump\nPress 'R' to restart\nPress 'C' to go to checkpoint",
 					98,
 					252,
 					30,
 					rl.BLACK,
 				)
 				rl.DrawText(
-					"Press 'W' to jump\nUse 'A' and 'D' to move\nJump in the air to double jump\nPress 'R' to restart",
+					"Press 'W' to jump\nUse 'A' and 'D' to move\nJump in the air to double jump\nPress 'R' to restart\nPress 'C' to go to checkpoint",
 					100,
 					250,
 					30,
@@ -244,13 +242,21 @@ main :: proc() {
 				)
 			}
 
-			rl.EndMode2D()
+			draw_level(level, assets)
+			draw_player(&plr, assets)
+			if show_collision {
+				draw_collision(level, plr)
+			}
 
-			rl.DrawText("Press 'R' to restart", 3, 900 - 18, 20, rl.BLACK)
-			rl.DrawText("Press 'R' to restart", 5, 900 - 20, 20, rl.DARKBLUE)
+			rl.EndMode2D()
 		}
 
-		rl.DrawFPS(0, 0)
+		if rl.IsKeyPressed(rl.KeyboardKey.F3) {
+			show_fps = !show_fps
+		}
+		if show_fps {
+			rl.DrawFPS(0, 0)
+		}
 
 		if game_finished {
 			if game_just_finished && level_transition <= 0 {
@@ -404,7 +410,6 @@ load_assets :: proc(path: string) -> (assets: Assets) {
 	assets.spike_tex = rl.LoadTexture("assets/textures/spike.png")
 	assets.checkpoint_down_tex = rl.LoadTexture("assets/textures/flag_down.png")
 	assets.checkpoint_up_tex = rl.LoadTexture("assets/textures/flag_up.png")
-	assets.start_tex = rl.LoadTexture("assets/kenny/PNG/Other/doorRed_top.png")
 	assets.end_tex = rl.LoadTexture("assets/textures/biscuit.png")
 	assets.player_tex = rl.LoadTexture("assets/textures/player.png")
 	assets.biscuits_found_tex = rl.LoadTexture("assets/textures/biscuits_found.png")
@@ -621,7 +626,7 @@ player_collision :: proc(level: ^Level, plr: ^Player, assets: Assets, dt: f32) {
 			tile_rect := rl.Rectangle{t.pos.x, t.pos.y, TILE_SIZE, TILE_SIZE}
 			if rl.CheckCollisionRecs(tile_rect, test_rect) {
 				if !t.active {
-					plr.checkpoint = t.pos
+					plr.checkpoint = t.pos + plr.size * 0.5
 					rl.PlaySound(assets.checkpoint_sound)
 					t.active = true
 				}
@@ -647,7 +652,7 @@ player_collision :: proc(level: ^Level, plr: ^Player, assets: Assets, dt: f32) {
 		case physics.CollisionHit:
 			if col.normal.x > 0 {
 				plr.vel.x = 0
-				plr.pos.x = col.point.x
+				plr.pos.x = col.point.x - 7
 			}
 			if col.normal.x < 0 {
 				plr.vel.x = 0
