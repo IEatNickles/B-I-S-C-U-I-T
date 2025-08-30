@@ -220,7 +220,7 @@ main :: proc() {
 
 		rl.BeginDrawing()
 
-		rl.ClearBackground(rl.Color{120, 120, 110, 255})
+		rl.ClearBackground(rl.Color{90, 90, 80, 255})
 
 		if !game_finished {
 			rl.BeginMode2D(cam)
