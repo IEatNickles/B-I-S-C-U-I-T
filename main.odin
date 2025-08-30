@@ -176,10 +176,10 @@ main :: proc() {
 			)
 
 			if !plr.found_biscuit {
-				if rl.IsKeyDown(rl.KeyboardKey.D) {
+				if rl.IsKeyDown(rl.KeyboardKey.D) || rl.IsKeyDown(rl.KeyboardKey.RIGHT) {
 					plr.input = 1
 					plr.dir = 1
-				} else if rl.IsKeyDown(rl.KeyboardKey.A) {
+				} else if rl.IsKeyDown(rl.KeyboardKey.A) || rl.IsKeyDown(rl.KeyboardKey.LEFT) {
 					plr.input = -1
 					plr.dir = -1
 				} else {
@@ -190,7 +190,7 @@ main :: proc() {
 					plr.vel.x = 0
 				}
 				plr.vel.y += 100
-				if (rl.IsKeyPressed(rl.KeyboardKey.W)) {
+				if rl.IsKeyPressed(rl.KeyboardKey.W) || rl.IsKeyPressed(rl.KeyboardKey.UP) {
 					if plr.jumps > 0 {
 						plr.vel.y = plr.jump_force * -100
 						plr.jumps -= 1
